@@ -115,6 +115,7 @@ int main() {
           //   filter over all time steps so far.
           vector<Particle> particles = pf.particles;
           int num_particles = particles.size();
+          std::cout << "particle number: " << num_particles << "\n";
           double highest_weight = -1.0;
           Particle best_particle;
           double weight_sum = 0.0;

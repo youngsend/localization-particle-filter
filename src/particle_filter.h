@@ -11,6 +11,7 @@
 
 #include <string>
 #include <vector>
+#include <random>
 #include "helper_functions.h"
 
 struct Particle {
@@ -29,7 +30,7 @@ class ParticleFilter {
 public:
     // Constructor
     // @param num_particles Number of particles
-    ParticleFilter() : num_particles(0), is_initialized(false) {}
+    ParticleFilter() : _num_particles(0), _is_initialized(false) {}
 
     // Destructor
     ~ParticleFilter() = default;
@@ -58,15 +59,6 @@ public:
                     double yaw_rate);
 
     /**
-     * dataAssociation Finds which observations correspond to which landmarks
-     *   (likely by using a nearest-neighbors data association).
-     * @param predicted Vector of predicted landmark observations
-     * @param observations Vector of landmark observations
-     */
-    void dataAssociation(std::vector<LandmarkObs> predicted,
-                         std::vector<LandmarkObs>& observations);
-
-    /**
      * updateWeights Updates the weights for each particle based on the likelihood
      *   of the observed measurements.
      * @param sensor_range Range [m] of sensor
@@ -78,6 +70,10 @@ public:
     void updateWeights(double sensor_range, double std_landmark[],
                        const std::vector<LandmarkObs> &observations,
                        const Map &map_landmarks);
+    int getClosestLandMarkId(double obs_x, double obs_y, const Map& map);
+    double multiv_prob(double sig_x, double sig_y,
+                       double x_obs, double y_obs,
+                       double mu_x, double mu_y);
 
     /**
      * resample Resamples from the updated set of particles to form
@@ -99,7 +95,7 @@ public:
      * initialized Returns whether particle filter is initialized yet or not.
      */
     bool initialized() const {
-        return is_initialized;
+        return _is_initialized;
     }
 
     /**
@@ -113,13 +109,16 @@ public:
 
 private:
     // Number of particles to draw
-    int num_particles;
+    int _num_particles {0};
 
     // Flag, if filter is initialized
-    bool is_initialized;
+    bool _is_initialized {false};
 
     // Vector of weights of all particles
-    std::vector<double> weights;
+    std::vector<double> _weights;
+
+    // generator, used in init, prediction.
+    std::default_random_engine _gen;
 };
 
 #endif  // PARTICLE_FILTER_H_
