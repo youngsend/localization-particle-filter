@@ -14,6 +14,8 @@
 #include <random>
 #include "helper_functions.h"
 
+constexpr double EPSILON = 0.000001;
+
 struct Particle {
     int id;
     double x;
@@ -30,7 +32,7 @@ class ParticleFilter {
 public:
     // Constructor
     // @param num_particles Number of particles
-    ParticleFilter() : _num_particles(0), _is_initialized(false) {}
+    ParticleFilter() = default;
 
     // Destructor
     ~ParticleFilter() = default;
@@ -70,8 +72,9 @@ public:
     void updateWeights(double sensor_range, double std_landmark[],
                        const std::vector<LandmarkObs> &observations,
                        const Map &map_landmarks);
-    int getClosestLandMarkId(double obs_x, double obs_y, const Map& map);
-    double multiv_prob(double sig_x, double sig_y,
+    static int getClosestLandMarkId(double obs_x, double obs_y,
+                             const std::vector<LandmarkObs>& landmarks);
+    static double multiv_prob(double sig_x, double sig_y,
                        double x_obs, double y_obs,
                        double mu_x, double mu_y);
 

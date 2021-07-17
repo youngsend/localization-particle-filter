@@ -27,7 +27,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
      * NOTE: Consult particle_filter.h for more information about this method
      *   (and others in this file).
      */
-    _num_particles = 10;  // TODO: Set the number of particles
+    _num_particles = 100;  // TODO: Set the number of particles
 
     std::normal_distribution<double> dist_x(x, std[0]);
     std::normal_distribution<double> dist_y(y, std[1]);
@@ -53,19 +53,26 @@ void ParticleFilter::prediction(double delta_t, double std_pos[],
      *  http://en.cppreference.com/w/cpp/numeric/random/normal_distribution
      *  http://www.cplusplus.com/reference/random/default_random_engine/
      */
+    // add noise. because each particle's mean is different, use zero-mean noise.
+    std::normal_distribution<double> dist_x(0, std_pos[0]);
+    std::normal_distribution<double> dist_y(0, std_pos[1]);
+    std::normal_distribution<double> dist_theta(0, std_pos[2]);
     for (auto& p : particles) {
-        double delta_theta = yaw_rate * delta_t;
-        p.x = p.x + velocity / yaw_rate * (sin(p.theta + delta_theta) - sin(p.theta));
-        p.y = p.y + velocity / yaw_rate * (cos(p.theta) - cos(p.theta + delta_theta));
-        p.theta = p.theta + delta_theta;
+        // deal with it when yaw_rate is 0. otherwise p.x and p.y may become nan.
+        if (abs(yaw_rate) < EPSILON) {
+            p.x += velocity * delta_t * cos(p.theta);
+            p.y += velocity * delta_t * sin(p.theta);
+        } else {
+            double delta_theta = yaw_rate * delta_t;
+            p.x += velocity / yaw_rate * (sin(p.theta + delta_theta) - sin(p.theta));
+            p.y += velocity / yaw_rate * (cos(p.theta) - cos(p.theta + delta_theta));
+            p.theta += delta_theta;
+        }
 
-        // add noise. put within loop because each particle's mean is different.
-        std::normal_distribution<double> dist_x(p.x, std_pos[0]);
-        std::normal_distribution<double> dist_y(p.y, std_pos[1]);
-        std::normal_distribution<double> dist_theta(p.theta, std_pos[2]);
-        p.x = dist_x(_gen);
-        p.y = dist_y(_gen);
-        p.theta = dist_theta(_gen);
+        // add noise.
+        p.x += dist_x(_gen);
+        p.y += dist_y(_gen);
+        p.theta += dist_theta(_gen);
     }
 }
 
@@ -87,33 +94,49 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
      */
     double sum_weight = 0.0;
     for (auto& p : particles) {
-        double particle_weight = 1.0;
-        for (auto& obs : observations) {
-            // 1. convert observation to map coordinate based on particle position and heading.
-            // actually observations are ego's (therefore the same for every particle).
-            // let observations be each particle's, and if one particle has these observations,
-            // how probable that this particle is located at ego's position? (this particle's weight.)
-            double obs_x_map = p.x + (cos(p.theta) * obs.x - sin(p.theta) * obs.y);
-            double obs_y_map = p.y + (sin(p.theta) * obs.x + cos(p.theta) * obs.y);
-
-            // 2. association. find the closest map landmark from this observation.
-            int id = getClosestLandMarkId(obs_x_map, obs_y_map, map_landmarks);
-            double mean_x = map_landmarks.landmark_list[id].x_f;
-            double mean_y = map_landmarks.landmark_list[id].y_f;
-
-            // 3. calculate weight for this observation.
-            double weight = multiv_prob(std_landmark[0], std_landmark[1],
-                                        obs_x_map, obs_y_map, mean_x, mean_y);
-            particle_weight *= weight;
+        // 0. only use observations that are within sensor_range from particle.
+        std::vector<LandmarkObs> landmarks_within_range;
+        for(auto& landmark : map_landmarks.landmark_list) {
+            if (fabs(landmark.x_f - p.x) <= sensor_range &&
+                fabs(landmark.y_f - p.y) <= sensor_range) {
+                landmarks_within_range.push_back(LandmarkObs{landmark.id_i,
+                                                             landmark.x_f,
+                                                             landmark.y_f});
+            }
         }
-        p.weight = particle_weight;
-        sum_weight += particle_weight;
-    }
 
-    // 4. normalize particle weights.
-    for(auto& p : particles) {
-        p.weight = p.weight / sum_weight;
+        if (landmarks_within_range.empty()) {
+            // if there's no landmarks within sensor range of this particle, do not use this particle.
+            std::cout << "no landmarks!\n";
+            p.weight = 0.0;
+            sum_weight += 0.0;
+        } else {
+            double particle_weight = 1.0;
+            for (auto &obs : observations) {
+                // 1. convert observation to map coordinate based on particle position and heading.
+                // actually observations are ego's (therefore the same for every particle).
+                // let observations be each particle's, and if one particle has these observations,
+                // how probable that this particle is located at ego's position? (this particle's weight.)
+                double obs_x_map = p.x + cos(p.theta) * obs.x - sin(p.theta) * obs.y;
+                double obs_y_map = p.y + sin(p.theta) * obs.x + cos(p.theta) * obs.y;
+
+                // 2. association. find the closest map landmark from this observation.
+                int id = getClosestLandMarkId(obs_x_map, obs_y_map, landmarks_within_range);
+                double mean_x = landmarks_within_range[id].x;
+                double mean_y = landmarks_within_range[id].y;
+
+                // 3. calculate weight for this observation.
+                double weight = multiv_prob(std_landmark[0], std_landmark[1],
+                                            obs_x_map, obs_y_map, mean_x, mean_y);
+                if (weight > 0) {
+                    particle_weight *= weight;
+                }
+            }
+            p.weight = particle_weight;
+            sum_weight += particle_weight;
+        }
     }
+    std::cout << "weight sum: " << sum_weight << "\n";
 }
 
 void ParticleFilter::resample() {
@@ -197,13 +220,14 @@ double ParticleFilter::multiv_prob(double sig_x, double sig_y,
     return weight;
 }
 
-int ParticleFilter::getClosestLandMarkId(double obs_x, double obs_y, const Map &map) {
-    int landmark_num = map.landmark_list.size();
+int ParticleFilter::getClosestLandMarkId(double obs_x, double obs_y,
+                                         const std::vector<LandmarkObs> &landmarks) {
+    int landmark_num = landmarks.size();
     double closest_dist = std::numeric_limits<double>::max();
     int closest_id = -1;
     for(int i=0; i<landmark_num; i++) {
-        double x_diff = map.landmark_list[i].x_f - obs_x;
-        double y_diff = map.landmark_list[i].y_f - obs_y;
+        double x_diff = landmarks[i].x - obs_x;
+        double y_diff = landmarks[i].y - obs_y;
         double current_dist = sqrt(x_diff * x_diff + y_diff * y_diff);
         if (current_dist < closest_dist) {
             closest_dist = current_dist;
