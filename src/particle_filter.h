@@ -14,7 +14,7 @@
 #include <random>
 #include "helper_functions.h"
 
-constexpr double EPSILON = 0.000001;
+constexpr double EPSILON = 0.0001;
 
 struct Particle {
     int id;

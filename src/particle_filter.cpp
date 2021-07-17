@@ -62,6 +62,7 @@ void ParticleFilter::prediction(double delta_t, double std_pos[],
         if (abs(yaw_rate) < EPSILON) {
             p.x += velocity * delta_t * cos(p.theta);
             p.y += velocity * delta_t * sin(p.theta);
+            p.theta += yaw_rate * delta_t;
         } else {
             double delta_theta = yaw_rate * delta_t;
             p.x += velocity / yaw_rate * (sin(p.theta + delta_theta) - sin(p.theta));
@@ -97,46 +98,37 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
         // 0. only use observations that are within sensor_range from particle.
         std::vector<LandmarkObs> landmarks_within_range;
         for(auto& landmark : map_landmarks.landmark_list) {
-            if (fabs(landmark.x_f - p.x) <= sensor_range &&
-                fabs(landmark.y_f - p.y) <= sensor_range) {
+            if (dist(p.x, p.y, landmark.x_f, landmark.y_f) <= sensor_range) {
                 landmarks_within_range.push_back(LandmarkObs{landmark.id_i,
                                                              landmark.x_f,
                                                              landmark.y_f});
             }
         }
 
-        if (landmarks_within_range.empty()) {
-            // if there's no landmarks within sensor range of this particle, do not use this particle.
-            std::cout << "no landmarks!\n";
-            p.weight = 0.0;
-            sum_weight += 0.0;
-        } else {
-            double particle_weight = 1.0;
-            for (auto &obs : observations) {
-                // 1. convert observation to map coordinate based on particle position and heading.
-                // actually observations are ego's (therefore the same for every particle).
-                // let observations be each particle's, and if one particle has these observations,
-                // how probable that this particle is located at ego's position? (this particle's weight.)
-                double obs_x_map = p.x + cos(p.theta) * obs.x - sin(p.theta) * obs.y;
-                double obs_y_map = p.y + sin(p.theta) * obs.x + cos(p.theta) * obs.y;
+        double particle_weight = 1.0;
+        for (auto &obs : observations) {
+            // 1. convert observation to map coordinate based on particle position and heading.
+            // actually observations are ego's (therefore the same for every particle).
+            // let observations be each particle's, and if one particle has these observations,
+            // how probable that this particle is located at ego's position? (this particle's weight.)
+            double obs_x_map = p.x + cos(p.theta) * obs.x - sin(p.theta) * obs.y;
+            double obs_y_map = p.y + sin(p.theta) * obs.x + cos(p.theta) * obs.y;
 
-                // 2. association. find the closest map landmark from this observation.
-                int id = getClosestLandMarkId(obs_x_map, obs_y_map, landmarks_within_range);
-                double mean_x = landmarks_within_range[id].x;
-                double mean_y = landmarks_within_range[id].y;
+            // 2. association. find the closest map landmark from this observation.
+            int id = getClosestLandMarkId(obs_x_map, obs_y_map, landmarks_within_range);
+            double mean_x = landmarks_within_range[id].x;
+            double mean_y = landmarks_within_range[id].y;
 
-                // 3. calculate weight for this observation.
-                double weight = multiv_prob(std_landmark[0], std_landmark[1],
-                                            obs_x_map, obs_y_map, mean_x, mean_y);
-                if (weight > 0) {
-                    particle_weight *= weight;
-                }
-            }
-            p.weight = particle_weight;
-            sum_weight += particle_weight;
+            // 3. calculate weight for this observation.
+            double weight = multiv_prob(std_landmark[0], std_landmark[1],
+                                        obs_x_map, obs_y_map, mean_x, mean_y);
+
+            particle_weight *= weight;
         }
+        p.weight = particle_weight;
+        sum_weight += particle_weight;
     }
-    std::cout << "weight sum: " << sum_weight << "\n";
+//    std::cout << "weight sum: " << sum_weight << "\n";
 }
 
 void ParticleFilter::resample() {
@@ -151,15 +143,13 @@ void ParticleFilter::resample() {
     for (auto& p : particles) {
         weights.push_back(p.weight);
     }
-    std::random_device rd;
-    std::mt19937 gen(rd());
     // https://en.cppreference.com/w/cpp/numeric/random/discrete_distribution/discrete_distribution
     std::discrete_distribution<> d(weights.begin(), weights.end());
 
     // 2. generate id for _num_particles times to create new particles.
     std::vector<Particle> new_particles(_num_particles);
     for(int i=0; i<_num_particles; i++) {
-        new_particles[i] = particles[d(gen)];
+        new_particles[i] = particles[d(_gen)];
     }
     // replace current particles with new particles.
     particles = new_particles;
@@ -216,7 +206,6 @@ double ParticleFilter::multiv_prob(double sig_x, double sig_y,
 
     // calculate weight using normalization terms and exponent
     double weight = gauss_norm * exp(-exponent);
-
     return weight;
 }
 
@@ -226,9 +215,7 @@ int ParticleFilter::getClosestLandMarkId(double obs_x, double obs_y,
     double closest_dist = std::numeric_limits<double>::max();
     int closest_id = -1;
     for(int i=0; i<landmark_num; i++) {
-        double x_diff = landmarks[i].x - obs_x;
-        double y_diff = landmarks[i].y - obs_y;
-        double current_dist = sqrt(x_diff * x_diff + y_diff * y_diff);
+        double current_dist = dist(obs_x, obs_y, landmarks[i].x, landmarks[i].y);
         if (current_dist < closest_dist) {
             closest_dist = current_dist;
             closest_id = i;
